@@ -1,7 +1,7 @@
 # Couch Controller Secure Advanced
 
 Landscape Flutter controller and four-motor Python couch simulator. The UI is intentionally dashboard-like for a widescreen phone: dual spring-return joysticks, live battery/speed/obstacle telemetry, motor temperatures and current, collision guard, arm state, lighting/horn controls, and a physical-style emergency stop.
-
+![Image](image.png)
 ## Security design
 
 This revision does **not** place a universal symmetric secret inside the Flutter binary.
