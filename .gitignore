@@ -1,0 +1,10 @@
+**/.dart_tool/
+**/.packages
+**/build/
+**/.flutter-plugins*
+**/.idea/
+**/.vscode/
+**/__pycache__/
+**/.venv/
+.env
+sim_backend/couch_identity.key
