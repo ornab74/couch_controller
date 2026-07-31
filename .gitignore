@@ -7,4 +7,3 @@
 **/__pycache__/
 **/.venv/
 .env
-sim_backend/couch_identity.key

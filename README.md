@@ -2,9 +2,6 @@
 
 Landscape Flutter controller and four-motor Python couch simulator. The UI is intentionally dashboard-like for a widescreen phone: dual spring-return joysticks, live battery/speed/obstacle telemetry, motor temperatures and current, collision guard, arm state, lighting/horn controls, and a physical-style emergency stop.
 
-## Demo
-![Image](image.png)
-
 ## Security design
 
 This revision does **not** place a universal symmetric secret inside the Flutter binary.
@@ -65,3 +62,9 @@ Use two processors in a real build:
 2. **Safety motor MCU:** watchdog, contactor/relay control, current limits, temperature limits, wheel encoders, bumper switches, and hardwired emergency stop.
 
 The network-facing processor should never directly generate unrestricted PWM. The motor MCU must independently reject stale, malformed, unsafe, or over-limit commands.
+
+## Multi-transport edition
+
+The settings dialog now supports Local API, HTTPS Cloud API, USB HAT and Bluetooth LE. The API key/bootstrap secret is AES-256-GCM encrypted at rest. Linux no longer crashes when the desktop keyring is locked: it falls back to an app-support master-key file with mode `0600`.
+
+Hardware references are under `hardware/`, including a Raspberry Pi packet bridge and an Arduino/Teensy watchdog controller.
