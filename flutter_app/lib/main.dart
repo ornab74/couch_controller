@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'models/telemetry.dart';
 import 'services/couch_api.dart';
+import 'services/transport_config.dart';
 import 'widgets/analog_stick.dart';
 import 'widgets/metric_tile.dart';
 
@@ -49,10 +50,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   Future<void> _boot() async {
-    await _api.loadConfiguration();
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) => _poll());
-    _commandTimer = Timer.periodic(const Duration(milliseconds: 100), (_) => _sendDrive());
-    await _poll();
+    try {
+      await _api.loadConfiguration();
+      _pollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) => _poll());
+      _commandTimer = Timer.periodic(const Duration(milliseconds: 100), (_) => _sendDrive());
+      await _poll();
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Configuration error: $e');
+    }
   }
 
   Future<void> _poll() async {
@@ -76,27 +81,65 @@ class _ControllerScreenState extends State<ControllerScreen> {
 
   Future<void> _showConnectionDialog() async {
     final current = _api.config;
-    final url = TextEditingController(text: current.baseUrl);
+    var selected = current.kind;
+    final endpoint = TextEditingController(text: current.baseUrl);
     final key = TextEditingController(text: current.apiKey);
+    final usbPort = TextEditingController(text: current.usbPort);
+    final bleId = TextEditingController(text: current.bleDeviceId);
     final saved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0B121B),
-        title: const Text('Secure API connection'),
-        content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: url, decoration: const InputDecoration(labelText: 'Server URL', hintText: 'http://192.168.1.50:8787')),
-          const SizedBox(height: 12),
-          TextField(controller: key, obscureText: true, decoration: const InputDecoration(labelText: 'Bearer API key')),
-          const SizedBox(height: 12),
-          const Text('API key: AES-256-GCM envelope encryption at rest. Commands: X25519 session key + Ed25519 couch identity signature + AES-GCM packets.', style: TextStyle(color: Color(0xFF8B9CAF), fontSize: 12)),
-        ])),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () async {
-            await _api.saveConfiguration(ApiConfiguration(baseUrl: url.text.trim(), apiKey: key.text));
-            if (context.mounted) Navigator.pop(context, true);
-          }, child: const Text('Save')),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF0B121B),
+          title: const Text('Secure couch transport'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<TransportKind>(
+                  value: selected,
+                  decoration: const InputDecoration(labelText: 'Connection type'),
+                  items: TransportKind.values.map((t) => DropdownMenuItem(value: t, child: Text(t.label))).toList(),
+                  onChanged: (v) => setDialogState(() => selected = v ?? selected),
+                ),
+                const SizedBox(height: 12),
+                if (selected == TransportKind.localApi || selected == TransportKind.cloudApi)
+                  TextField(controller: endpoint, decoration: InputDecoration(labelText: selected == TransportKind.cloudApi ? 'Cloud HTTPS URL' : 'Local backend URL', hintText: 'http://127.0.0.1:8787')),
+                if (selected == TransportKind.usbHat)
+                  TextField(controller: usbPort, decoration: const InputDecoration(labelText: 'USB serial port', hintText: '/dev/ttyACM0')),
+                if (selected == TransportKind.ble)
+                  TextField(controller: bleId, decoration: const InputDecoration(labelText: 'BLE device ID / name', hintText: 'COUCH-HAT')),
+                const SizedBox(height: 12),
+                TextField(controller: key, obscureText: true, decoration: const InputDecoration(labelText: 'Provisioned couch key / API key')),
+                const SizedBox(height: 12),
+                const Text('The key is encrypted at rest with AES-256-GCM. Linux automatically falls back to a user-only 0600 vault key file when Secret Service is locked. USB and BLE packets use HKDF-SHA256 + AES-GCM, sequence numbers, timestamps and replay rejection.', style: TextStyle(color: Color(0xFF8B9CAF), fontSize: 12)),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                try {
+                  await _api.saveConfiguration(ApiConfiguration(
+                    kind: selected,
+                    baseUrl: endpoint.text.trim(),
+                    apiKey: key.text.trim(),
+                    usbPort: usbPort.text.trim(),
+                    bleDeviceId: bleId.text.trim(),
+                    pinnedFingerprint: current.pinnedFingerprint,
+                  ));
+                  if (context.mounted) Navigator.pop(context, true);
+                  messenger.showSnackBar(SnackBar(content: Text('${selected.label} settings saved securely.')));
+                } catch (e) {
+                  messenger.showSnackBar(SnackBar(content: Text('Could not save settings: $e')));
+                }
+              },
+              child: const Text('Save securely'),
+            ),
+          ],
+        ),
       ),
     );
     if (saved == true) await _poll();
@@ -136,7 +179,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   onSteering: (v) => _steering = v,
                 )),
                 const SizedBox(width: 14),
-                SizedBox(width: 230, child: _SidePanel(
+                Flexible(flex: 3, child: ConstrainedBox(constraints: const BoxConstraints(minWidth: 205, maxWidth: 270), child: _SidePanel(
                   telemetry: _telemetry,
                   hot: hot,
                   busy: _busy,
@@ -144,7 +187,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   onCollision: (v) async { await _api.setCollisionAvoidance(v); await _poll(); },
                   onEstop: () async { await _api.emergencyStop(); await _poll(); },
                   onClearEstop: () async { await _api.clearEmergencyStop(); await _poll(); },
-                )),
+                ))),
               ]),
             )),
           ]),
@@ -153,7 +196,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 }
-
 
 class _SecurityRibbon extends StatelessWidget {
   const _SecurityRibbon({required this.connected, required this.fingerprint});
@@ -175,8 +217,8 @@ class _SecurityRibbon extends StatelessWidget {
       const SizedBox(width: 18),
       const Icon(Icons.verified_user_outlined, size: 15, color: Color(0xFF31B7FF)),
       const SizedBox(width: 7),
-      Text(fingerprint == null ? 'COUCH IDENTITY: UNPINNED' : 'COUCH ID: $fingerprint', style: const TextStyle(fontSize: 10, color: Color(0xFF8EA6B8))),
-      const Spacer(),
+      Flexible(child: Text(fingerprint == null ? 'COUCH IDENTITY: UNPINNED' : 'COUCH ID: $fingerprint', style: const TextStyle(fontSize: 10, color: Color(0xFF8EA6B8)), overflow: TextOverflow.ellipsis)),
+      const SizedBox(width: 12),
       const Text('ANTI-REPLAY • DEAD-MAN 450 ms • COLLISION GUARD', style: TextStyle(fontSize: 9, color: Color(0xFF698296), letterSpacing: .8)),
     ]),
   );
@@ -217,8 +259,8 @@ class _VehiclePanel extends StatelessWidget {
     decoration: BoxDecoration(color: const Color(0xB7070D14), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFF18344C))),
     child: Column(children: [
       Padding(padding: const EdgeInsets.all(16), child: Row(children: [
-        Text(telemetry.armed ? 'ARMED · MANUAL CONTROL' : 'PARKED · DISARMED', style: TextStyle(color: telemetry.armed ? const Color(0xFF36B9FF) : const Color(0xFF8B9CAF), fontWeight: FontWeight.w700, letterSpacing: 1)),
-        const Spacer(),
+        Expanded(child: Text(telemetry.armed ? 'ARMED · MANUAL CONTROL' : 'PARKED · DISARMED', overflow: TextOverflow.ellipsis, style: TextStyle(color: telemetry.armed ? const Color(0xFF36B9FF) : const Color(0xFF8B9CAF), fontWeight: FontWeight.w700, letterSpacing: 1))),
+        const SizedBox(width: 8),
         Icon(telemetry.collisionAvoidance ? Icons.shield : Icons.shield_outlined, color: telemetry.collisionAvoidance ? const Color(0xFF63E67D) : Colors.orange),
       ])),
       Expanded(child: Stack(alignment: Alignment.center, children: [
@@ -261,9 +303,9 @@ class _ControlsPanel extends StatelessWidget {
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(color: const Color(0xB7070D14), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFF18344C))),
     child: Row(children: [
-      Expanded(child: AnalogStick(title: 'DRIVE', subtitle: 'BACK / FORWARD', axis: Axis.vertical, enabled: telemetry.armed && !telemetry.estop, onChanged: onThrottle)),
+      Expanded(child: AnalogStick(title: 'DRIVE', subtitle: 'BACK / FORWARD', axis: Axis.vertical, enabled: !telemetry.estop, onChanged: onThrottle)),
       Container(width: 1, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 35), color: const Color(0xFF17344D)),
-      Expanded(child: AnalogStick(title: 'STEER', subtitle: 'LEFT / RIGHT', axis: Axis.horizontal, enabled: telemetry.armed && !telemetry.estop, onChanged: onSteering)),
+      Expanded(child: AnalogStick(title: 'STEER', subtitle: 'LEFT / RIGHT', axis: Axis.horizontal, enabled: !telemetry.estop, onChanged: onSteering)),
     ]),
   );
 }
