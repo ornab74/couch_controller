@@ -39,7 +39,7 @@ class BleCouchTransport {
 
   Future<void> connect(BluetoothDevice device) async {
     await disconnect();
-    await device.connect(timeout: const Duration(seconds: 12), license: License.free);
+    await device.connect(timeout: const Duration(seconds: 12));
     final services = await device.discoverServices();
     final service = services.firstWhere((s) => s.uuid == serviceUuid);
     _command = service.characteristics.firstWhere((c) => c.uuid == commandUuid);

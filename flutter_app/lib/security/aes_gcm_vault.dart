@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// AES-256-GCM envelope storage for the API key.
@@ -30,8 +29,21 @@ class AesGcmVault {
       );
 
   Future<File> _fallbackKeyFile() async {
-    final directory = await getApplicationSupportDirectory();
+    final home = Platform.environment['HOME'];
+
+    if (home == null || home.trim().isEmpty) {
+      throw StateError('Unable to locate the Linux home directory.');
+    }
+
+    final directory = Directory('$home/.local/share/couch_controller');
     await directory.create(recursive: true);
+
+    try {
+      await Process.run('chmod', ['700', directory.path]);
+    } catch (_) {
+      // Best effort on systems without chmod.
+    }
+
     return File('${directory.path}/$_fallbackFileName');
   }
 
